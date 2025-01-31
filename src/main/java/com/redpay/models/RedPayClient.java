@@ -3,7 +3,9 @@ package com.redpay.models;
 import com.redpay.enums.RedPayEnvironment;
 import com.redpay.provider.RedPayConfigProvider;
 import com.redpay.services.RedPayIntegrityService;
-import org.apache.hc.client5.http.classic.methods.*;
+import org.apache.hc.client5.http.classic.methods.HttpGet;
+import org.apache.hc.client5.http.classic.methods.HttpPost;
+import org.apache.hc.client5.http.classic.methods.HttpPut;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
@@ -124,8 +126,8 @@ public class RedPayClient {
      */
     private String getApiUrl() {
         return config.getEnvironment() == RedPayEnvironment.Production
-                ? "https://api.redpay.com"
-                : "https://sandbox.redpay.com";
+                ? RedPayEnvironment.Production.name()
+                : RedPayEnvironment.Integration.name();
     }
 
     /**
