@@ -1,21 +1,21 @@
 package com.redpay.provider;
 
 import com.redpay.models.RedPayConfig;
-import lombok.Getter;
 
-import java.util.Set;
+import lombok.Getter;
+import lombok.ToString;
 
 /**
- * Proveedor de configuración para RedPay.
- * Gestiona una única instancia de configuración global de RedPay.
+ * Proveedor de configuración para RedPay. Gestiona una única instancia de
+ * configuración global de RedPay.
  */
 @Getter
+@ToString
 public class RedPayConfigProvider {
 
     private static RedPayConfigProvider instance;
     private RedPayConfig config;
 
-    // Constructor privado para evitar nuevas instancias
     private RedPayConfigProvider() {
     }
 
@@ -35,7 +35,7 @@ public class RedPayConfigProvider {
      * Establece la configuración de RedPay. Solo puede configurarse una vez.
      *
      * @param config La configuración a establecer.
-     * @throws IllegalStateException    Si la configuración ya fue establecida.
+     * @throws IllegalStateException Si la configuración ya fue establecida.
      * @throws IllegalArgumentException Si la configuración está incompleta.
      */
     public synchronized void setConfig(RedPayConfig config) {
@@ -48,7 +48,6 @@ public class RedPayConfigProvider {
         // Validar que todos los campos obligatorios estén presentes
         validateConfig(config);
 
-        // Asignar la configuración
         this.config = config;
     }
 
@@ -75,4 +74,3 @@ public class RedPayConfigProvider {
         }
     }
 }
-
