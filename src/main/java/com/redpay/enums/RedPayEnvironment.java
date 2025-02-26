@@ -1,5 +1,8 @@
 package com.redpay.enums;
 
+import lombok.Getter;
+import lombok.ToString;
+
 /**
  * Enum que define los entornos disponibles para el servicio RedPay.
  * Cada valor es un entorno de ejecución del servicio RedPay.
@@ -8,6 +11,7 @@ package com.redpay.enums;
  * Integration: Entorno de integración, se utiliza para pruebas y desarrollo.
  * </p>
  */
+@Getter
 public enum RedPayEnvironment {
     Production("production"),
     Integration("integration");
@@ -18,7 +22,4 @@ public enum RedPayEnvironment {
         this.environment = environment;
     }
 
-    public String getEnvironment() {
-        return environment;
-    }
 }
