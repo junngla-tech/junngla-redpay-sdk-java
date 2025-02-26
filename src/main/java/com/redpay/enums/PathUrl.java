@@ -1,5 +1,7 @@
 package com.redpay.enums;
 
+import lombok.Getter;
+
 /**
  * Enum que representa los endpoints de la API de Redpay.
  * Cada valor es un endpoint de la API de Redpay.
@@ -10,9 +12,10 @@ package com.redpay.enums;
  * Authorize: Autoriza un pago. <br>
  * ValidateAuthorization: Valida una autorización de pago. <br>
  * Chargeback: Realiza una devolución. <br>
- * User: Crea un usuario. <br>
+ * User: Crear o actualizar un usuario. <br>
  * UserVerify: Verifica un usuario. <br>
  */
+@Getter
 public enum PathUrl {
 
     Generate("/payment-token/generate"),
@@ -22,7 +25,7 @@ public enum PathUrl {
     ValidateAuthorization("/authorization/check"),
     Chargeback("/chargeback"),
     User("/user"),
-    UserVerify("/user/verify-enrollment?");
+    UserVerify("/user/verify-enrollment");
 
     private final String path;
 
@@ -30,9 +33,6 @@ public enum PathUrl {
         this.path = path;
     }
 
-    public String getPath() {
-        return path;
-    }
 }
 
 
