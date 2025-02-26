@@ -1,5 +1,7 @@
 package com.redpay.enums;
 
+import lombok.Getter;
+
 /**
  * Enum que define los modos de programación de retiro de dinero del Portal de Cartolas.
  * <p>
@@ -11,18 +13,9 @@ package com.redpay.enums;
  * DAYS_OF_MONTH: Programación basada en días específicos del mes.
  * </p>
  */
+@Getter
 public enum ScheduleMode {
-    DAYS_OF_WEEK("DAYS_OF_WEEK"),
-    DAYS_OF_MONTH("DAYS_OF_MONTH");
-
-    private final String mode;
-
-    ScheduleMode(String mode) {
-        this.mode = mode;
-    }
-
-    public String getMode() {
-        return mode;
-    }
+    DAYS_OF_WEEK,
+    DAYS_OF_MONTH,
 }
 
