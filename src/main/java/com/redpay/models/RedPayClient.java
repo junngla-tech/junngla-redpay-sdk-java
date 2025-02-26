@@ -1,49 +1,86 @@
 package com.redpay.models;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.redpay.config.constants;
 import com.redpay.enums.RedPayEnvironment;
 import com.redpay.provider.RedPayConfigProvider;
 import com.redpay.services.RedPayIntegrityService;
+
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.classic.methods.HttpPut;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
+import org.apache.hc.client5.http.socket.ConnectionSocketFactory;
+import org.apache.hc.client5.http.socket.PlainConnectionSocketFactory;
+import org.apache.hc.client5.http.ssl.SSLConnectionSocketFactory;
 import org.apache.hc.core5.http.ClassicHttpRequest;
 import org.apache.hc.core5.http.ClassicHttpResponse;
+import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.ParseException;
+import org.apache.hc.core5.http.config.Registry;
+import org.apache.hc.core5.http.config.RegistryBuilder;
 import org.apache.hc.core5.http.io.SocketConfig;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.apache.hc.core5.ssl.SSLContextBuilder;
 import org.apache.hc.core5.util.Timeout;
+import org.bouncycastle.asn1.pkcs.PrivateKeyInfo;
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.openssl.PEMKeyPair;
+import org.bouncycastle.openssl.PEMParser;
+import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.net.ssl.SSLContext;
+
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.PrivateKey;
+import java.security.Security;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateFactory;
-import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Map;
+import java.util.stream.Collectors;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
 
 /**
- * Cliente RedPay para realizar solicitudes HTTP firmadas y validar integridad.
+ * Cliente RedPay para realizar solicitudes HTTP firmadas y validar la integridad de las respuestas.
+ * <p>
+ * Esta clase se encarga de configurar un cliente HTTP seguro (mTLS) utilizando certificados,
+ * firmar las solicitudes con un servicio de integridad y validar la respuesta del servidor.
+ * </p>
  */
 public class RedPayClient {
     private static final Logger LOGGER = LoggerFactory.getLogger(RedPayClient.class);
+
+    /**
+     * Cliente HTTP utilizado para realizar las solicitudes.
+     */
     private final CloseableHttpClient httpClient;
+
+    /**
+     * Configuración de RedPay obtenida a través de un proveedor de configuración.
+     */
     private final RedPayConfig config;
+
+    /**
+     * Servicio para la generación y validación de firmas de integridad.
+     */
     private final RedPayIntegrityService integrityService;
 
     /**
-     * Constructor: Configura los certificados, la URL base y los interceptores.
+     * Constructor que inicializa la configuración, el servicio de integridad y el cliente HTTP.
      */
     public RedPayClient() {
         this.config = RedPayConfigProvider.getInstance().getConfig();
@@ -52,67 +89,109 @@ public class RedPayClient {
     }
 
     /**
-     * Carga el certificado SSL (mTLS) desde archivos .crt y .key y crea un cliente HTTP autenticado.
+     * Crea y configura un cliente HTTP seguro (mTLS) utilizando certificados.
+     *
+     * @return Instancia de {@link CloseableHttpClient} configurada para mTLS.
      */
     private CloseableHttpClient createHttpClient() {
+        if (config.getCertificate() == null) {
+            throw new IllegalStateException("No se encontró configuración de certificados.");
+        }
+        
+        String keyPath = config.getCertificate().getKey_path();
+        String certPath = config.getCertificate().getCert_path();
+        
         try {
-            if (config.getCertificate() == null) {
-                throw new IllegalStateException("No se encontró configuración de certificados.");
-            }
-
-            // Obtener archivos desde la configuración
-            String keyPath = config.getCertificate().getKey_path();  // private.key
-            String certPath = config.getCertificate().getCert_path(); // certificate.crt
-
-            // Cargar clave privada desde private.key
             PrivateKey privateKey = loadPrivateKey(keyPath);
-
-            // Cargar certificado desde certificate.crt
             Certificate certificate = loadCertificate(certPath);
-
-            // Crear un KeyStore en memoria y agregar clave privada + certificado
-            KeyStore keyStore = KeyStore.getInstance("PKCS12");
-            keyStore.load(null, null); // Inicializa un keystore vacío
-            keyStore.setKeyEntry("alias", privateKey, null, new Certificate[]{certificate});
-
-            // Crear SSLContext con el KeyStore
-            // TODO: Revisar si es necesario sslContext
-            SSLContext sslContext = SSLContextBuilder.create()
-                    .loadKeyMaterial(keyStore, null) // Sin contraseña
+            KeyStore keyStore = createKeyStore(privateKey, certificate);
+            SSLContext sslContext = createSSLContext(keyStore);
+            SSLConnectionSocketFactory sslSocketFactory = new SSLConnectionSocketFactory(sslContext);
+            
+            Registry<ConnectionSocketFactory> socketFactoryRegistry = RegistryBuilder.<ConnectionSocketFactory>create()
+                    .register("https", sslSocketFactory)
+                    .register("http", PlainConnectionSocketFactory.getSocketFactory())
                     .build();
-
-            // Crear configuración de socket con timeout
+            
+            PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager(socketFactoryRegistry);
             SocketConfig socketConfig = SocketConfig.custom()
-                    .setSoTimeout(Timeout.ofSeconds(30)) // Timeout de 30 segundos
+                    .setSoTimeout(Timeout.ofSeconds(30))
                     .build();
-
-            // Crear un PoolingHttpClientConnectionManager con SSLContext
-            PoolingHttpClientConnectionManager connectionManager =
-                    new PoolingHttpClientConnectionManager();
-            connectionManager.setDefaultSocketConfig(socketConfig); // Configuración correcta
-
+            connectionManager.setDefaultSocketConfig(socketConfig);
+            
             return HttpClients.custom()
-                    .setConnectionManager(connectionManager) // Reemplazo de setSSLSocketFactory()
+                    .setConnectionManager(connectionManager)
                     .build();
-
         } catch (Exception e) {
             LOGGER.error("Error al configurar SSL", e);
             throw new RuntimeException("Error al configurar SSL", e);
         }
     }
-
+    
     /**
-     * Carga una clave privada en formato PKCS8 desde un archivo .key.
+     * Crea un KeyStore en memoria y almacena la clave privada junto con el certificado.
+     *
+     * @param privateKey  La clave privada a almacenar.
+     * @param certificate El certificado a almacenar.
+     * @return Un KeyStore configurado con la clave y el certificado.
+     * @throws Exception Si ocurre algún error al crear el KeyStore.
+     */
+    private KeyStore createKeyStore(PrivateKey privateKey, Certificate certificate) throws Exception {
+        KeyStore keyStore = KeyStore.getInstance("PKCS12");
+        keyStore.load(null, null);
+        keyStore.setKeyEntry("alias", privateKey, null, new Certificate[]{certificate});
+        return keyStore;
+    }
+    
+    /**
+     * Crea un SSLContext utilizando el KeyStore proporcionado.
+     *
+     * @param keyStore El KeyStore que contiene la clave privada y el certificado.
+     * @return Un SSLContext configurado para mTLS.
+     * @throws Exception Si ocurre algún error al construir el SSLContext.
+     */
+    private SSLContext createSSLContext(KeyStore keyStore) throws Exception {
+        return SSLContextBuilder.create()
+                .loadKeyMaterial(keyStore, null) // Sin contraseña
+                .loadTrustMaterial(null, (chain, authType) -> true)
+                .build();
+    }
+    
+    /**
+     * Carga la clave privada en formato PKCS#1 (-----BEGIN RSA PRIVATE KEY-----) utilizando BouncyCastle.
+     *
+     * @param keyPath Ruta al archivo de la clave privada.
+     * @return La clave privada cargada.
+     * @throws Exception Si ocurre algún error al cargar o procesar la clave.
      */
     private PrivateKey loadPrivateKey(String keyPath) throws Exception {
-        byte[] keyBytes = Files.readAllBytes(Paths.get(keyPath));
-        PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(keyBytes);
-        KeyFactory keyFactory = KeyFactory.getInstance("RSA");
-        return keyFactory.generatePrivate(keySpec);
+        String keyContent = new String(Files.readAllBytes(Paths.get(keyPath)), StandardCharsets.UTF_8);
+        if (!keyContent.contains("-----BEGIN RSA PRIVATE KEY-----")) {
+            throw new IllegalArgumentException("Se esperaba una clave en formato PKCS#1");
+        }
+        // Agregar BouncyCastle si aún no está agregado
+        Security.addProvider(new BouncyCastleProvider());
+        try (PEMParser pemParser = new PEMParser(new StringReader(keyContent))) {
+            Object object = pemParser.readObject();
+            JcaPEMKeyConverter converter = new JcaPEMKeyConverter().setProvider("BC");
+            if (object instanceof PEMKeyPair) {
+                PEMKeyPair keyPair = (PEMKeyPair) object;
+                return converter.getKeyPair(keyPair).getPrivate();
+            } else if (object instanceof PrivateKeyInfo) {
+                PrivateKeyInfo keyInfo = (PrivateKeyInfo) object;
+                return converter.getPrivateKey(keyInfo);
+            } else {
+                throw new IllegalArgumentException("Formato de clave no soportado");
+            }
+        }
     }
-
+    
     /**
-     * Carga un certificado desde un archivo .crt en formato X.509.
+     * Carga un certificado en formato X.509 desde un archivo .crt.
+     *
+     * @param certPath Ruta al archivo del certificado.
+     * @return El certificado cargado.
+     * @throws Exception Si ocurre algún error al leer o procesar el certificado.
      */
     private Certificate loadCertificate(String certPath) throws Exception {
         try (FileInputStream certInput = new FileInputStream(certPath)) {
@@ -122,79 +201,142 @@ public class RedPayClient {
     }
 
     /**
-     * Obtiene la URL base según el entorno configurado.
+     * Obtiene la URL base de la API según el entorno configurado (Producción o Integración).
+     *
+     * @return La URL base correspondiente.
      */
     private String getApiUrl() {
         return config.getEnvironment() == RedPayEnvironment.Production
-                ? RedPayEnvironment.Production.name()
-                : RedPayEnvironment.Integration.name();
+                ? constants.API_URL_PRODUCTION
+                : constants.API_URL_INTEGRATION;
     }
 
     /**
-     * Obtiene el secreto de integridad configurado.
+     * Obtiene el secreto utilizado para la firma de integridad.
+     *
+     * @return El secreto de integridad configurado.
      */
     private String getSecretIntegrity() {
         return config.getSecrets().getIntegrity();
     }
 
     /**
-     * Realiza una solicitud HTTP genérica firmada.
+     * Realiza una solicitud HTTP genérica firmada utilizando el método especificado.
+     *
+     * @param method Método HTTP ("GET", "POST", "PUT").
+     * @param path   Ruta del endpoint.
+     * @param data   Datos a enviar en la solicitud.
+     * @return La respuesta en formato JSON.
+     * @throws Exception Si ocurre algún error durante la solicitud o firma.
      */
     private String request(String method, String path, Map<String, Object> data) throws Exception {
         String url = getApiUrl() + path;
+        ObjectMapper mapper = new ObjectMapper();
 
-        // Firmar el objeto usando RedPayIntegrityService
-        Map<String, Object> signedData = integrityService.getSignedObject(data, getSecretIntegrity());
+        // Configurar el mapper para omitir valores nulos al serializar
+        mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+
+        Map<String, Object> filteredData = data.entrySet()
+                .stream()
+                .filter(entry -> entry.getValue() != null)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        // Firmar los datos utilizando el servicio de integridad
+        Map<String, Object> signedData = integrityService.getSignedObject(filteredData, getSecretIntegrity());
+
+        String jsonPayload = mapper.writeValueAsString(signedData);
 
         ClassicHttpRequest request;
 
         switch (method.toUpperCase()) {
-            case "GET":
-                request = new HttpGet(url);
-                break;
-            case "POST":
+            case "GET" -> {
+                String queryString = toQueryString(signedData);
+                String fullUrl = url + queryString;
+                System.out.println("Request URL: " + fullUrl);
+                request = new HttpGet(fullUrl);
+            }
+            case "POST" -> {
                 HttpPost postRequest = new HttpPost(url);
-                postRequest.setEntity(new StringEntity(integrityService.generateSignature(signedData, getSecretIntegrity())));
+                postRequest.setEntity(new StringEntity(jsonPayload, ContentType.parse("UTF-8")));
                 request = postRequest;
-                break;
-            case "PUT":
+            }
+            case "PUT" -> {
                 HttpPut putRequest = new HttpPut(url);
-                putRequest.setEntity(new StringEntity(integrityService.generateSignature(signedData, getSecretIntegrity())));
+                putRequest.setEntity(new StringEntity(jsonPayload, ContentType.parse("UTF-8")));
                 request = putRequest;
-                break;
-            default:
-                throw new IllegalArgumentException("Método HTTP no soportado: " + method);
+            }
+            default -> throw new IllegalArgumentException("Método HTTP no soportado: " + method);
         }
 
         request.addHeader("Content-Type", "application/json");
 
-        // Usar execute con un response handler
-        return httpClient.execute(request, response -> handleResponse(response, signedData));
+        return httpClient.execute(request, this::handleResponse);
     }
 
     /**
-     * Maneja la respuesta HTTP y válida la firma.
+     * Convierte un mapa de parámetros en una cadena de consulta (query string) con codificación URL.
+     *
+     * @param params Mapa de parámetros a convertir.
+     * @return La cadena de consulta generada.
+     * @throws Exception Si ocurre un error durante la codificación.
      */
-    private String handleResponse(ClassicHttpResponse response, Map<String, Object> signedData) throws IOException {
+    private String toQueryString(Map<String, Object> params) throws Exception {
+        if (params == null || params.isEmpty()) {
+            return "";
+        }
+        StringBuilder query = new StringBuilder("?");
+        for (Map.Entry<String, Object> entry : params.entrySet()) {
+            if (query.length() > 1) {
+                query.append("&");
+            }
+            query.append(java.net.URLEncoder.encode(entry.getKey(), "UTF-8"));
+            query.append("=");
+            query.append(java.net.URLEncoder.encode(String.valueOf(entry.getValue()), "UTF-8"));
+        }
+        return query.toString();
+    }
+
+    /**
+     * Maneja la respuesta HTTP, validando el código de estado y la firma de integridad.
+     *
+     * @param response La respuesta HTTP recibida.
+     * @return El cuerpo de la respuesta en formato String.
+     * @throws IOException   Si ocurre un error de entrada/salida.
+     * @throws ParseException Si ocurre un error al parsear la respuesta.
+     */
+    private String handleResponse(ClassicHttpResponse response) throws IOException, ParseException {
+        int statusCode = response.getCode();
+        String responseBody = EntityUtils.toString(response.getEntity());
+
+        // Si el código no es 2xx, se lanza una excepción con el error
+        if (statusCode < 200 || statusCode >= 300) {
+            LOGGER.error("Error en la respuesta: HTTP {}. Body: {}", statusCode, responseBody);
+            throw new RuntimeException("Error en la petición: HTTP " + statusCode + " " + responseBody);
+        }
+
         try {
-            String responseBody = EntityUtils.toString(response.getEntity());
+            ObjectMapper mapper = new ObjectMapper();
+            Map<String, Object> responseMap = mapper.readValue(responseBody, new TypeReference<Map<String, Object>>() {});
 
-            // Validar firma de la respuesta
-            boolean signatureIsValid = integrityService.validateSignature(signedData, getSecretIntegrity());
+            String providedSignature = responseMap.get("signature").toString();
+            String computedSignature = integrityService.generateSignature(responseMap, getSecretIntegrity());
 
-            if (!signatureIsValid) {
+            if (!providedSignature.equals(computedSignature)) {
                 throw new SecurityException("Firma inválida en la respuesta del servidor");
             }
-
-            return responseBody;
-
-        } catch (ParseException e) {
-            throw new IOException("Error al parsear la respuesta HTTP", e);
+        } catch (JsonProcessingException | SecurityException e) {
+            throw new IOException("Error al validar la firma de la respuesta", e);
         }
+
+        return responseBody;
     }
 
     /**
      * Realiza una solicitud GET firmada.
+     *
+     * @param path   Ruta del endpoint.
+     * @param params Parámetros a incluir en la solicitud.
+     * @return La respuesta en formato JSON.
      */
     public String get(String path, Map<String, Object> params) {
         try {
@@ -206,7 +348,12 @@ public class RedPayClient {
     }
 
     /**
-     * Realiza una solicitud GET que falla si el usuario no es encontrado.
+     * Realiza una solicitud GET que lanza excepción si el recurso no es encontrado.
+     *
+     * @param path   Ruta del endpoint.
+     * @param params Parámetros a incluir en la solicitud.
+     * @return La respuesta en formato JSON.
+     * @throws Exception Si ocurre algún error durante la solicitud.
      */
     public String getOrFail(String path, Map<String, Object> params) throws Exception {
         String response = request("GET", path, params);
@@ -218,6 +365,11 @@ public class RedPayClient {
 
     /**
      * Realiza una solicitud POST firmada.
+     *
+     * @param path Ruta del endpoint.
+     * @param body Cuerpo de la solicitud en forma de mapa.
+     * @return La respuesta en formato JSON.
+     * @throws Exception Si ocurre algún error durante la solicitud.
      */
     public String post(String path, Map<String, Object> body) throws Exception {
         return request("POST", path, body);
@@ -225,6 +377,11 @@ public class RedPayClient {
 
     /**
      * Realiza una solicitud PUT firmada.
+     *
+     * @param path Ruta del endpoint.
+     * @param body Cuerpo de la solicitud en forma de mapa.
+     * @return La respuesta en formato JSON.
+     * @throws Exception Si ocurre algún error durante la solicitud.
      */
     public String put(String path, Map<String, Object> body) throws Exception {
         return request("PUT", path, body);
