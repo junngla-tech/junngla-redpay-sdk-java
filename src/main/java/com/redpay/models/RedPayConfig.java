@@ -27,7 +27,7 @@ public class RedPayConfig {
     /**
      * Sección de secretos o credenciales necesarios para generar la firma de las solicitudes y/o fillers.
      */
-    Secret secrets;
+    Secrets secrets;
     
     /**
      * Entorno de operación de RedPay (por ejemplo, Producción o Integración).
@@ -37,7 +37,7 @@ public class RedPayConfig {
     /**
      * Certificado utilizado para la autenticación mTLS.
      */
-    Certificate certificate;
+    Certificates certificate;
     
     /**
      * Tipo de enrolador configurado.
