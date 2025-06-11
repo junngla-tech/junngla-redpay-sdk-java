@@ -1,12 +1,20 @@
 package com.redpay.models;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.redpay.config.constants;
-import com.redpay.enums.RedPayEnvironment;
-import com.redpay.provider.RedPayConfigProvider;
-import com.redpay.services.RedPayIntegrityService;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.StringReader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.security.KeyStore;
+import java.security.PrivateKey;
+import java.security.Security;
+import java.security.cert.Certificate;
+import java.security.cert.CertificateFactory;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import javax.net.ssl.SSLContext;
 
 import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
@@ -36,32 +44,28 @@ import org.bouncycastle.openssl.jcajce.JcaPEMKeyConverter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.SSLContext;
-
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.StringReader;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.Security;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateFactory;
-import java.util.Map;
-import java.util.stream.Collectors;
-
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.redpay.config.ConstantsRedPay;
+import com.redpay.enums.RedPayEnvironment;
+import com.redpay.exceptions.ApiError;
+import com.redpay.exceptions.InvalidSignatureError;
+import com.redpay.provider.RedPayConfigProvider;
+import com.redpay.services.RedPayIntegrityService;
 
 /**
- * Cliente RedPay para realizar solicitudes HTTP firmadas y validar la integridad de las respuestas.
+ * Cliente RedPay para realizar solicitudes HTTP firmadas y validar la
+ * integridad de las respuestas.
  * <p>
- * Esta clase se encarga de configurar un cliente HTTP seguro (mTLS) utilizando certificados,
- * firmar las solicitudes con un servicio de integridad y validar la respuesta del servidor.
+ * Esta clase se encarga de configurar un cliente HTTP seguro (mTLS) utilizando
+ * certificados, firmar las solicitudes con un servicio de integridad y validar
+ * la respuesta del servidor.
  * </p>
  */
 public class RedPayClient {
+
     private static final Logger LOGGER = LoggerFactory.getLogger(RedPayClient.class);
 
     /**
@@ -70,7 +74,8 @@ public class RedPayClient {
     private final CloseableHttpClient httpClient;
 
     /**
-     * Configuración de RedPay obtenida a través de un proveedor de configuración.
+     * Configuración de RedPay obtenida a través de un proveedor de
+     * configuración.
      */
     private final RedPayConfig config;
 
@@ -80,7 +85,8 @@ public class RedPayClient {
     private final RedPayIntegrityService integrityService;
 
     /**
-     * Constructor que inicializa la configuración, el servicio de integridad y el cliente HTTP.
+     * Constructor que inicializa la configuración, el servicio de integridad y
+     * el cliente HTTP.
      */
     public RedPayClient() {
         this.config = RedPayConfigProvider.getInstance().getConfig();
@@ -97,28 +103,28 @@ public class RedPayClient {
         if (config.getCertificate() == null) {
             throw new IllegalStateException("No se encontró configuración de certificados.");
         }
-        
+
         String keyPath = config.getCertificate().getKey_path();
         String certPath = config.getCertificate().getCert_path();
-        
+
         try {
             PrivateKey privateKey = loadPrivateKey(keyPath);
             Certificate certificate = loadCertificate(certPath);
             KeyStore keyStore = createKeyStore(privateKey, certificate);
             SSLContext sslContext = createSSLContext(keyStore);
             SSLConnectionSocketFactory sslSocketFactory = new SSLConnectionSocketFactory(sslContext);
-            
+
             Registry<ConnectionSocketFactory> socketFactoryRegistry = RegistryBuilder.<ConnectionSocketFactory>create()
                     .register("https", sslSocketFactory)
                     .register("http", PlainConnectionSocketFactory.getSocketFactory())
                     .build();
-            
+
             PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager(socketFactoryRegistry);
             SocketConfig socketConfig = SocketConfig.custom()
                     .setSoTimeout(Timeout.ofSeconds(30))
                     .build();
             connectionManager.setDefaultSocketConfig(socketConfig);
-            
+
             return HttpClients.custom()
                     .setConnectionManager(connectionManager)
                     .build();
@@ -127,11 +133,12 @@ public class RedPayClient {
             throw new RuntimeException("Error al configurar SSL", e);
         }
     }
-    
+
     /**
-     * Crea un KeyStore en memoria y almacena la clave privada junto con el certificado.
+     * Crea un KeyStore en memoria y almacena la clave privada junto con el
+     * certificado.
      *
-     * @param privateKey  La clave privada a almacenar.
+     * @param privateKey La clave privada a almacenar.
      * @param certificate El certificado a almacenar.
      * @return Un KeyStore configurado con la clave y el certificado.
      * @throws Exception Si ocurre algún error al crear el KeyStore.
@@ -142,11 +149,12 @@ public class RedPayClient {
         keyStore.setKeyEntry("alias", privateKey, null, new Certificate[]{certificate});
         return keyStore;
     }
-    
+
     /**
      * Crea un SSLContext utilizando el KeyStore proporcionado.
      *
-     * @param keyStore El KeyStore que contiene la clave privada y el certificado.
+     * @param keyStore El KeyStore que contiene la clave privada y el
+     * certificado.
      * @return Un SSLContext configurado para mTLS.
      * @throws Exception Si ocurre algún error al construir el SSLContext.
      */
@@ -156,9 +164,10 @@ public class RedPayClient {
                 .loadTrustMaterial(null, (chain, authType) -> true)
                 .build();
     }
-    
+
     /**
-     * Carga la clave privada en formato PKCS#1 (-----BEGIN RSA PRIVATE KEY-----) utilizando BouncyCastle.
+     * Carga la clave privada en formato PKCS#1 (-----BEGIN RSA PRIVATE
+     * KEY-----) utilizando BouncyCastle.
      *
      * @param keyPath Ruta al archivo de la clave privada.
      * @return La clave privada cargada.
@@ -174,24 +183,23 @@ public class RedPayClient {
         try (PEMParser pemParser = new PEMParser(new StringReader(keyContent))) {
             Object object = pemParser.readObject();
             JcaPEMKeyConverter converter = new JcaPEMKeyConverter().setProvider("BC");
-            if (object instanceof PEMKeyPair) {
-                PEMKeyPair keyPair = (PEMKeyPair) object;
+            if (object instanceof PEMKeyPair keyPair) {
                 return converter.getKeyPair(keyPair).getPrivate();
-            } else if (object instanceof PrivateKeyInfo) {
-                PrivateKeyInfo keyInfo = (PrivateKeyInfo) object;
+            } else if (object instanceof PrivateKeyInfo keyInfo) {
                 return converter.getPrivateKey(keyInfo);
             } else {
                 throw new IllegalArgumentException("Formato de clave no soportado");
             }
         }
     }
-    
+
     /**
      * Carga un certificado en formato X.509 desde un archivo .crt.
      *
      * @param certPath Ruta al archivo del certificado.
      * @return El certificado cargado.
-     * @throws Exception Si ocurre algún error al leer o procesar el certificado.
+     * @throws Exception Si ocurre algún error al leer o procesar el
+     * certificado.
      */
     private Certificate loadCertificate(String certPath) throws Exception {
         try (FileInputStream certInput = new FileInputStream(certPath)) {
@@ -201,14 +209,15 @@ public class RedPayClient {
     }
 
     /**
-     * Obtiene la URL base de la API según el entorno configurado (Producción o Integración).
+     * Obtiene la URL base de la API según el entorno configurado (Producción o
+     * Integración).
      *
      * @return La URL base correspondiente.
      */
     private String getApiUrl() {
         return config.getEnvironment() == RedPayEnvironment.Production
-                ? constants.API_URL_PRODUCTION
-                : constants.API_URL_INTEGRATION;
+                ? ConstantsRedPay.API_URL_PRODUCTION
+                : ConstantsRedPay.API_URL_INTEGRATION;
     }
 
     /**
@@ -221,11 +230,12 @@ public class RedPayClient {
     }
 
     /**
-     * Realiza una solicitud HTTP genérica firmada utilizando el método especificado.
+     * Realiza una solicitud HTTP genérica firmada utilizando el método
+     * especificado.
      *
      * @param method Método HTTP ("GET", "POST", "PUT").
-     * @param path   Ruta del endpoint.
-     * @param data   Datos a enviar en la solicitud.
+     * @param path Ruta del endpoint.
+     * @param data Datos a enviar en la solicitud.
      * @return La respuesta en formato JSON.
      * @throws Exception Si ocurre algún error durante la solicitud o firma.
      */
@@ -265,7 +275,8 @@ public class RedPayClient {
                 putRequest.setEntity(new StringEntity(jsonPayload, ContentType.parse("UTF-8")));
                 request = putRequest;
             }
-            default -> throw new IllegalArgumentException("Método HTTP no soportado: " + method);
+            default ->
+                throw new IllegalArgumentException("Método HTTP no soportado: " + method);
         }
 
         request.addHeader("Content-Type", "application/json");
@@ -274,7 +285,8 @@ public class RedPayClient {
     }
 
     /**
-     * Convierte un mapa de parámetros en una cadena de consulta (query string) con codificación URL.
+     * Convierte un mapa de parámetros en una cadena de consulta (query string)
+     * con codificación URL.
      *
      * @param params Mapa de parámetros a convertir.
      * @return La cadena de consulta generada.
@@ -297,44 +309,51 @@ public class RedPayClient {
     }
 
     /**
-     * Maneja la respuesta HTTP, validando el código de estado y la firma de integridad.
+     * Maneja la respuesta HTTP, validando el código de estado y la firma de
+     * integridad.
      *
      * @param response La respuesta HTTP recibida.
      * @return El cuerpo de la respuesta en formato String.
-     * @throws IOException   Si ocurre un error de entrada/salida.
+     * @throws IOException Si ocurre un error de entrada/salida.
      * @throws ParseException Si ocurre un error al parsear la respuesta.
      */
     private String handleResponse(ClassicHttpResponse response) throws IOException, ParseException {
         int statusCode = response.getCode();
         String responseBody = EntityUtils.toString(response.getEntity());
-
-        // Si el código no es 2xx, se lanza una excepción con el error
+    
+        // Si el código no es 2xx, se lanza una excepción de ApiError
         if (statusCode < 200 || statusCode >= 300) {
             LOGGER.error("Error en la respuesta: HTTP {}. Body: {}", statusCode, responseBody);
-            throw new RuntimeException("Error en la petición: HTTP " + statusCode + " " + responseBody);
+            ApiError apiError = ApiError.fromResponse(statusCode, responseBody);
+            if (statusCode >= 500) {
+                LOGGER.error("Error interno del servidor (HTTP {}): {}", statusCode, apiError);
+            }
+            throw apiError;
         }
-
+    
         try {
             ObjectMapper mapper = new ObjectMapper();
             Map<String, Object> responseMap = mapper.readValue(responseBody, new TypeReference<Map<String, Object>>() {});
-
+    
             String providedSignature = responseMap.get("signature").toString();
             String computedSignature = integrityService.generateSignature(responseMap, getSecretIntegrity());
-
+    
             if (!providedSignature.equals(computedSignature)) {
-                throw new SecurityException("Firma inválida en la respuesta del servidor");
+                LOGGER.error("Firma inválida. Firma proporcionada: {}. Firma calculada: {}", providedSignature, computedSignature);
+                throw new InvalidSignatureError();
             }
-        } catch (JsonProcessingException | SecurityException e) {
-            throw new IOException("Error al validar la firma de la respuesta", e);
+        } catch (JsonProcessingException e) {
+            LOGGER.error("Error al parsear la respuesta JSON. Body: {}", responseBody, e);
+            throw new IOException("Error al parsear la respuesta JSON", e);
         }
-
+    
         return responseBody;
     }
 
     /**
      * Realiza una solicitud GET firmada.
      *
-     * @param path   Ruta del endpoint.
+     * @param path Ruta del endpoint.
      * @param params Parámetros a incluir en la solicitud.
      * @return La respuesta en formato JSON.
      */
@@ -348,9 +367,10 @@ public class RedPayClient {
     }
 
     /**
-     * Realiza una solicitud GET que lanza excepción si el recurso no es encontrado.
+     * Realiza una solicitud GET que lanza excepción si el recurso no es
+     * encontrado.
      *
-     * @param path   Ruta del endpoint.
+     * @param path Ruta del endpoint.
      * @param params Parámetros a incluir en la solicitud.
      * @return La respuesta en formato JSON.
      * @throws Exception Si ocurre algún error durante la solicitud.

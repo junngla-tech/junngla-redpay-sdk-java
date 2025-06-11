@@ -58,7 +58,6 @@ public class RedPayService {
      */
     private RoleActions initializeService() {
         RedPayConfig config = RedPayConfigProvider.getInstance().getConfig();
-        System.out.println("config type: " + config.getType());
         return switch (config.getType()) {
             case COLLECTOR -> new RedPayERService();
             case PAYER -> new RedPayEPService();

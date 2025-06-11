@@ -23,6 +23,9 @@ RedPay SDK Java es una biblioteca diseñada para facilitar la integración con l
         - [Validación (opcional)](#validación-opcional)
     - [Validación de autorización](#validación-de-autorización)
     - [Detalles de la devolución](#detalles-de-la-devolución)
+    - [Gestión de autorizaciones](#gestión-de-autorizaciones)
+        - [Métodos principales](#métodos-principales)
+        - [Métodos abstractos](#métodos-abstractos)
 - [Enrolador pagador (Billetera digital)](#enrolador-pagador-billetera-digital)
     - [Configuración inicial](#configuración-inicial-1)
     - [RedPayService](#redpayservice-1)
@@ -290,6 +293,99 @@ try {
     ChargebackResponse chargebackResponse = redpayService.generateChargeback(chargebackRequest);
 } catch (Exception e) {
     System.out.println("Error al realizar la devolución: " + e.getMessage());
+}
+```
+
+### Gestión de autorizaciones
+
+La clase abstracta `RedPayAuthorizationManagement` permite procesar webhooks de pre-autorización siguiendo un flujo predefinido y validar las autorizaciónes. Proporciona una estructura base que incluye la validación de la firma (`signature`), la verificación de si el webhook es informativo, el estado de revocación de la orden, la validación de reutilización de órdenes y procesar autorizaciones de ordenes pendientes. Además, genera cuatro tipos de eventos, dos dependiendo de la naturaleza del webhook y dos dependiendo del estado de la autorización:
+
+1. `onInfoEvent`: Disparado cuando se trata de un webhook informativo.
+2. `onPreAuthorizeEvent`: Disparado cuando el webhook de pre-autorización es exitoso.
+3. `onSuccess`: Disparado cuando el proceso de autorización es exitoso.
+4. `onError`: Disparado cuando ocurre un error en el proceso de autorización.
+
+La clase está diseñada para ser extendida por los desarrolladores, quienes deben implementar ciertos métodos abstractos para manejar las órdenes y los eventos específicos de su caso de uso.
+
+#### Métodos principales
+
+1. `processWebhookPreAuthorize`: Procesa el webhook ejecutando una secuencia que incluye:
+
+   - Validación de la firma (`validateSignature`).
+   - Obtención de la orden (`getOrder`).
+   - Verificación del estado de revocación de la orden (`checkIfOrderIsRevoked`).
+   - Validación opcional de reutilización de la orden (`validateOrderReuse`).
+   - Ejecución del evento correspondiente: `onPreAuthorizeEvent` o `onInfoEvent`.
+
+2. `start`: Inicia el proceso de validación de autorización, ejecutando un `scheduler` que incluye:
+
+   - Obtención de las autorización de las órdenes pendientes (`processAuthorizeOrders`). Si no hay órdenes pendientes, se detiene el proceso (`stop`).
+   - Procesamiento de las autorizaciones pendientes (`processAuthorizeOrder`).
+     - Por cada autorización pendiente, se ejecuta el método `validateAuthorization` de RedPayService donde se obtiene el estado final de cada autorización pendiente:
+       - Si la autorización es exitosa, se ejecuta el evento `onSuccess`.
+       - Si la autorización falla, se ejecuta el evento `onError`.
+
+3. `stop`: Detiene el proceso de validación de autorización.
+
+#### Métodos abstractos
+
+Estos métodos deben ser implementados por las subclases:
+
+1. Procesamiento de los webhooks:
+
+- `getOrder`: Recupera una orden asociada a un token.
+- `countAuthorizationByOrder`: Valida si una orden necesita verificación de reutilización (opcional).
+- `onInfoEvent`: Maneja eventos informativos del webhook.
+- `onPreAuthorizeEvent`: Maneja eventos de pre-autorización.
+
+2. Procesamiento de las autorizaciones:
+
+- `pendingAuthorizeOrders`: Obtiene las órdenes pendientes de autorización.
+- `onSuccess`: Maneja eventos de autorización exitosa.
+- `onError`: Maneja eventos de autorización fallida.
+
+**Ejemplo de implementación: Gestión de autorizaciones**
+
+```java
+public class AuthorizationManagement extends RedPayAuthorizationManagement {
+
+    @Override
+    public Order getOrder(String tokenUuid) throws Exception {
+        // Implementación para obtener una orden asociada a un token
+        return <order>;
+    }
+
+    @Override
+    protected int countAuthorizationByOrder(String tokenUuid) {
+        // Implementación para validar si una orden necesita verificación de reutilización
+        return <count>;
+    }
+
+    @Override
+    public void onInfoEvent(WebhookPreAuthorization webhook) throws Exception {
+        // Implementación para manejar eventos informativos del webhook
+    }
+
+    @Override
+    public void onPreAuthorizeEvent(WebhookPreAuthorization webhook, Order order) throws Exception {
+        // Implementación para manejar eventos de pre-autorización
+    }
+
+    @Override
+    public List<AuthorizeOrder> pendingAuthorizeOrders() throws Exception {
+        // Implementación para obtener las órdenes pendientes de autorización
+        return <orders>;
+    }
+
+    @Override
+    public void onSuccess(AuthorizeOrder authorizeOrder, String statusCode) throws Exception {
+        // Implementación para manejar eventos de autorización exitosa
+    }
+
+    @Override
+    public void onError(AuthorizeOrder authorizeOrder, String statusCode) throws Exception {
+        // Implementación para manejar eventos de autorización fallida
+    }
 }
 ```
 
